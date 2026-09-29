@@ -380,12 +380,13 @@ impl SweepResult {
     }
 
     /// Total `u8` slots needed for a dense map over these edges.
+    ///
+    /// `next_power_of_two` is 1 for an empty edge set, so no `.max(1)` is
+    /// needed -- and adding one would be a clamp-like pattern that suggests a
+    /// bound it cannot provide.
     pub fn map_size(edges: &[Edge]) -> usize {
-        edges
-            .len()
-            .next_power_of_two()
-            .max(1)
-            .min(1 << 16) // stay L1/L2 resident; see DESIGN.md §4.4
+        // Capped at 64 KiB so the map stays L1/L2 resident; see DESIGN.md §4.4.
+        edges.len().next_power_of_two().min(1 << 16)
     }
 
     /// AFL's hashed index, for the collision-rate measurement in
