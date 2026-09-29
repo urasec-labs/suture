@@ -32,8 +32,13 @@ pub const SHDR_SIZE: u64 = 64;
 pub const DEFAULT_GUARD: u64 = 0x10000;
 
 /// Reject absurd inputs before we try to allocate for them.
+///
+/// `MAX_SHNUM` is deliberately far below `u16::MAX`: 65535 section headers is
+/// already 4 MB of table, and using `u16::MAX` as the ceiling made the
+/// `e_shnum > MAX_SHNUM` guard dead code -- it could never fire, so it looked
+/// like validation while validating nothing.
 const MAX_PHNUM: u16 = 4096;
-const MAX_SHNUM: u16 = 65535;
+const MAX_SHNUM: u16 = 4096;
 /// An arena larger than this is almost certainly a bug, not a real binary.
 const MAX_ARENA: u64 = 1 << 30;
 
@@ -400,7 +405,11 @@ impl Elf64Image {
                 bail!("{} is {} bytes, over the {}-byte cap", name, buf.len(), MAX_ARENA);
             }
         }
-        if self.e_phnum + 2 > u16::MAX {
+        // `checked_add` rather than `e_phnum + 2 > u16::MAX`: the addition
+        // itself would wrap first, and the comparison against `u16::MAX` is
+        // always false for a `u16` that has not already overflowed -- so the
+        // original guard could never fire.
+        if self.e_phnum.checked_add(2).is_none() {
             bail!("e_phnum is too large to append two program headers");
         }
 
