@@ -613,7 +613,7 @@ mod tests {
         // precisely the bug this test exists to catch.
         let arena_vaddr = 0x100000u64;
         let mut a = ArenaBuilder::new(1024);
-        a.emit_dispatch(0x4, 7, 9, 0x2000);
+        a.emit_dispatch(0x4, 7, 9, 0x2000).unwrap();
         a.emit_bump_and_jump(11, 0x4000);
         a.finish().unwrap();
         // What the ELF builder will do: page-align past the code arena.
@@ -640,7 +640,7 @@ mod tests {
     fn table_is_placed_after_all_code_and_aligned() {
         let mut a = ArenaBuilder::new(1024);
         a.emit_bump_and_jump(1, 0x10);
-        a.emit_dispatch(0x4, 2, 3, 0x20);
+        a.emit_dispatch(0x4, 2, 3, 0x20).unwrap();
         let code_end = a.code_len();
         a.finish().unwrap();
         assert_eq!(a.table_offset() % 64, 0, "table must be cache-line aligned");
@@ -666,7 +666,7 @@ mod tests {
         // two addresses would take different code paths.
         let build = |vaddr: u64| {
             let mut a = ArenaBuilder::new(64);
-            a.emit_dispatch(0x4, 7, 9, 0x2000);
+            a.emit_dispatch(0x4, 7, 9, 0x2000).unwrap();
             a.emit_bump_and_jump(11, 0x4000);
             a.finish().unwrap();
             // Mirror what the ELF builder does: the table is a second segment one
