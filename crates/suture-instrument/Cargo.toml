@@ -1,0 +1,16 @@
+[package]
+name = "suture-instrument"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Arena, dispatch stubs, block relocation, and the end-to-end pipeline"
+
+[dependencies]
+suture-elf = { path = "../suture-elf" }
+suture-ir = { path = "../suture-ir" }
+suture-coverage = { path = "../suture-coverage" }
+iced-x86 = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }

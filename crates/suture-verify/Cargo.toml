@@ -1,0 +1,13 @@
+[package]
+name = "suture-verify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Differential verification: the correctness gate"
+
+[dependencies]
+suture-elf = { path = "../suture-elf" }
+suture-exec = { path = "../suture-exec" }
+suture-instrument = { path = "../suture-instrument" }
+anyhow = { workspace = true }

@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/suture-elf",
+    "crates/suture-ir",
+    "crates/suture-instrument",
+    "crates/suture-coverage",
+    "crates/suture-exec",
+    "crates/suture-mutate",
+    "crates/suture-fuzz",
+    "crates/suture-verify",
+    "crates/suture-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/CHANGE-ME/suture"
+
+[workspace.dependencies]
+# Decoding + ENCODING. iced-x86 is chosen over Zydis deliberately: pure Rust,
+# so there is no C toolchain in the build graph, CI stays simple, and the
+# encoder is what makes block relocation (§4.2 of DESIGN.md) possible.
+iced-x86 = "1.21"
+
+# ELF reading only. Writing is ours (see suture-elf), because the file-rebuild
+# logic is part of the contribution and goblin cannot express it.
+goblin = "0.9"
+
+anyhow = "1"
+thiserror = "2"
+
+# `color` is off deliberately. It pulls in `anstream`, which on Windows pulls in
+# `windows-sys`, which needs an import-library tool that a bare rustup
+# `windows-gnu` install does not have. suture's output is line-oriented and
+# colourless by design, so nothing is lost -- and it keeps the whole workspace
+# buildable without a full MinGW install, which matters for CI.
+clap = { version = "4", default-features = false, features = [
+    "std",
+    "derive",
+    "help",
+    "usage",
+    "error-context",
+    "suggestions",
+] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+nix = { version = "0.29", features = ["ptrace", "process", "signal", "fs", "term", "sched"] }
+memmap2 = "0.9"
+tracing = "0.1"
+# `ansi` is off for the same reason as clap's `color` above.
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "env-filter",
+    "std",
+] }
+rayon = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+debug = true   # we need frame pointers + line info for crash triage

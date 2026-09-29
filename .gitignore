@@ -1,0 +1,26 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Benchmark and fuzzing output
+/out
+/out-*
+/bench-results
+/crashes
+/corpus
+/testcases
+/id
+*.profraw
+
+# Python prototype
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

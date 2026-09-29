@@ -1,0 +1,16 @@
+[package]
+name = "suture-exec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Target execution and coverage readout"
+
+# No `nix` / `memmap2` here on purpose. They are Linux-only in practice, and
+# suture targets Linux binaries, so the crate that runs them does not need to
+# build on Windows -- which keeps the core (suture-elf, suture-ir, suture-coverage,
+# suture-instrument) cross-platform and CI-friendly.
+[dependencies]
+suture-coverage = { path = "../suture-coverage" }
+suture-elf = { path = "../suture-elf" }
+anyhow = { workspace = true }
