@@ -785,9 +785,8 @@ mod tests {
         for len in [1usize, 4095, 4096, 4097] {
             let img = Elf64Image::parse(synth_elf(0x400000)).unwrap();
             let code: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-            let (out, cv, _) = img
-                .rebuild_with_arena(&code, &vec![0u8; 64], 0)
-                .unwrap();
+            let table = [0u8; 64];
+            let (out, cv, _) = img.rebuild_with_arena(&code, &table, 0).unwrap();
             let oi = Elf64Image::parse(out).unwrap();
             let seg = oi.phdrs[1];
             assert_eq!(seg.p_filesz as usize, len);
