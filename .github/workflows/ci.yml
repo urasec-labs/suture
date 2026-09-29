@@ -41,11 +41,14 @@ jobs:
         run: cargo test --workspace
 
       # Report-only. A style gate that blocks a push teaches people to add
-      # `#[allow]` rather than to read the warning.
+      # `#[allow]` rather than to read the warning. `continue-on-error` is what
+      # actually makes a step report-only -- the step *name* does not.
       - name: Clippy (report only)
+        continue-on-error: true
         run: cargo clippy --workspace --all-targets --message-format=short
 
       - name: Format check (report only)
+        continue-on-error: true
         run: cargo fmt --all -- --check
 
   analyze:
