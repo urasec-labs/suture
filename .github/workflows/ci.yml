@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   test:
@@ -21,27 +20,32 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build tools
-        if: runner.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # `-D warnings` is scoped to the build and test steps deliberately, not
+      # set as a job-level env var: a job-level RUSTFLAGS leaks into the clippy
+      # step below, and clippy's style lints would then fail the build. These two
+      # steps are the correctness gate -- they are what caught a discarded Result
+      # and two dead guards.
       - name: Build
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo build --workspace --locked
 
       - name: Test
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo test --workspace
 
-      # Clippy reports but does not gate. `-D warnings` on the *build* and
-      # *test* steps above is the correctness gate -- it is what caught a
-      # discarded Result and two dead guards. Clippy's remaining output is
-      # style, and a style gate that blocks a push trains people to add
-      # `#[allow]` rather than to read it.
+      # Report-only. A style gate that blocks a push teaches people to add
+      # `#[allow]` rather than to read the warning.
       - name: Clippy (report only)
         run: cargo clippy --workspace --all-targets --message-format=short
 
-      - name: Format check
+      - name: Format check (report only)
         run: cargo fmt --all -- --check
 
   analyze:
@@ -72,8 +76,7 @@ jobs:
           curl -fsSL -o /tmp/busybox \
             https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
           ./target/release/suture analyze /tmp/busybox --json
-          ./target/release/suture analyze /tmp/busybox \
-            | tee /tmp/analysis.txt
+          ./target/release/suture analyze /tmp/busybox | tee /tmp/analysis.txt
           grep -q "VERDICT: STRONG" /tmp/analysis.txt
 
       - name: Instrument a real 1.1 MB binary
