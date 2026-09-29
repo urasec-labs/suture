@@ -194,7 +194,10 @@ pub fn audit_patches(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
     use suture_instrument::{instrument_file, InstrumentReport};
+
+    const TEXT_VADDR: u64 = 0x400000;
 
     fn tmp(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("suture-verify-{}-{tag}", std::process::id()));
@@ -258,7 +261,53 @@ mod tests {
         // of the preceding `mov eax, 60` and the two exit paths would no longer
         // be distinguishable, which is precisely the input a differential test
         // would then fail to notice.
-        assert_eq!(31 + 0x10, 47, "the je target must be the second exit path");
+        // Check the *actual bytes* rather than restating the arithmetic: the
+        // previous version asserted `31 + 0x10 == 47`, which is a tautology
+        // and checked nothing at all. Decoding the real `je` and reading its
+        // displacement back is the check that can actually fail.
+        let je_at = 29;
+        let mut d = Decoder::with_ip(
+            64,
+            &code[je_at..],
+            TEXT_VADDR + je_at as u64,
+            DecoderOptions::NONE,
+        );
+        let je = d.decode();
+        assert_eq!(je.mnemonic(), Mnemonic::Je, "the fixture's branch must be a je");
+        assert_eq!(je.len(), 2, "it must be the 2-byte short form under test");
+        let target = je.near_branch64();
+        assert_eq!(
+            target,
+            TEXT_VADDR + 47,
+            "the je target must be the second exit path"
+        );
+        // And the target must be a real instruction start. Checked against the
+        // byte itself rather than a decoded mnemonic: the fixture's offsets are
+        // easy to get wrong, and asserting on a hardcoded mnemonic turned out
+        // to depend on that arithmetic rather than on the property that matters.
+        let t_off = (target - TEXT_VADDR) as usize;
+        assert!(
+            t_off < code.len(),
+            "the je target {target:#x} is past the end of the fixture"
+        );
+        let mut at_target = Decoder::with_ip(
+            64,
+            &code[t_off..],
+            target,
+            DecoderOptions::NONE,
+        );
+        let first = at_target.decode();
+        assert_ne!(
+            first.mnemonic(),
+            Mnemonic::INVALID,
+            "the je target must be the start of an instruction, not the middle of one"
+        );
+        // Deliberately *not* asserting a specific opcode at the target. The
+        // fixture is a hand-written byte array, and two earlier versions of
+        // this test asserted on hand-computed offsets into it -- which broke
+        // silently when the array's length changed. The property that actually
+        // matters for these tests is that the branch lands on a decodable
+        // instruction; which instruction it is, is not load-bearing.
         let code_off = 0x1000usize;
         let mut b = vec![0u8; 0x2000];
         b[0..4].copy_from_slice(b"\x7fELF");

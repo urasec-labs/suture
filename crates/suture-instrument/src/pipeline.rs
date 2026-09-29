@@ -203,10 +203,9 @@ pub fn instrument_file(input: &Path, output: &Path) -> Result<InstrumentReport> 
         // is reported as a coverage gap.
         if matches!(step.strategy, Strategy::Relocate | Strategy::AppendTail)
             && step.block_len < 5
+            && step.block_vaddr == text.p_vaddr
         {
-            if step.block_vaddr == text.p_vaddr {
-                short_blocks.push(step.block_vaddr);
-            }
+            short_blocks.push(step.block_vaddr);
         }
         if step.term_vaddr < text.p_vaddr
             || step.term_vaddr >= text.p_vaddr + text.p_filesz

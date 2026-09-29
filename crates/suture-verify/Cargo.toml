@@ -11,3 +11,9 @@ suture-elf = { path = "../suture-elf" }
 suture-exec = { path = "../suture-exec" }
 suture-instrument = { path = "../suture-instrument" }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+# Only the tests decode the synthetic fixture, to check its branch actually
+# lands where it claims. Keeping this out of [dependencies] makes sure the
+# library itself pulls in no disassembler.
+iced-x86 = { workspace = true }

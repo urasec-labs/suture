@@ -399,6 +399,7 @@ name = "suture-verify"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "iced-x86",
  "suture-elf",
  "suture-exec",
  "suture-instrument",
