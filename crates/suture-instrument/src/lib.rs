@@ -207,7 +207,7 @@ impl ArenaBuilder {
     ) -> Result<u32> {
         let key = StubKey { cc, edge_taken, edge_nottaken, target };
         if let Some(&off) = self.stub_cache.get(&key) {
-            return Ok(off as u32);
+            return Ok(off);
         }
 
         let offset = self.bytes.len() as u64;
@@ -227,8 +227,9 @@ impl ArenaBuilder {
             offset,
             kind: StubKind::DispatchCc { cc, edge_taken, edge_nottaken },
         });
-        self.stub_cache.insert(key, offset as u32);
-        Ok(offset as u32)
+        let off = offset as u32;
+        self.stub_cache.insert(key, off);
+        Ok(off)
     }
 
     /// Reserve a bare 5-byte `jmp rel32` whose displacement is patched later.
@@ -257,8 +258,9 @@ impl ArenaBuilder {
         self.bytes.extend_from_slice(&JMP_REL32);
         self.bytes.extend_from_slice(&0i32.to_le_bytes());
         self.stubs.push(StubRecord { offset, kind: StubKind::BumpAndJump { edge } });
-        self.stub_cache.insert(key, offset as u32);
-        offset as u32
+        let off = offset as u32;
+        self.stub_cache.insert(key, off);
+        off
     }
 
     /// Append a relocated copy of a basic block, re-encoding every instruction

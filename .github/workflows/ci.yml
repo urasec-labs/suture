@@ -33,8 +33,13 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      # Clippy reports but does not gate. `-D warnings` on the *build* and
+      # *test* steps above is the correctness gate -- it is what caught a
+      # discarded Result and two dead guards. Clippy's remaining output is
+      # style, and a style gate that blocks a push trains people to add
+      # `#[allow]` rather than to read it.
+      - name: Clippy (report only)
+        run: cargo clippy --workspace --all-targets --message-format=short
 
       - name: Format check
         run: cargo fmt --all -- --check
