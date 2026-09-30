@@ -1,40 +1,78 @@
 <div align="center">
 
-# suture
+# SUTURE
 
-**Source-free edge-coverage instrumentation for x86-64 ELF binaries, by static rewriting.**
+### Static Rewriting & Binary Instrumentation Framework
 
-[🇹🇷 Türkçe](#türkçe) · [🇬🇧 English](#english)
+**Source-free exact edge coverage for x86-64 ELF binaries, by static rewriting.**
 
-`status: research prototype — design phase`
+`Rust · x86-64 assembly · ELF architecture · binary rewriting · fuzzing · AFL++`
+
+[🇹🇷 Türkçe](#türkçe) · [🇬🇧 English](#english) · [📄 Deep dive EN](blog/suture-deep-dive.en.md) · [📄 Deep dive TR](blog/suture-deep-dive.tr.md)
+
+`status: research prototype — rewriter complete and measured on a real binary; fuzzing runtime not started`
 
 </div>
 
 ---
 
-## English
+## What this is, in one line
 
-### What it does
+A binary rewriter that gives **closed-source** x86-64 ELF binaries exact edge
+coverage — with no source code, no compiler, and no runtime shim — by
+statically re-encoding instructions and relocating basic blocks.
 
-Coverage-guided fuzzers normally get their feedback by *recompiling* the
-target with `afl-clang` or libFuzzer. That is impossible for closed-source
-binaries, un-reproducible builds, and instrumenting-unfriendly code.
+## The two numbers
 
-suture takes an x86-64 ELF and **nothing else** — no source, no compiler, no
-build script — and produces a new ELF that:
+`busybox` 1.35.0 (static, musl, 1.1 MB). Both are re-measured in CI on every push,
+so they cannot silently drift away from what the code does.
 
-- behaves identically to the original (same exit code, same output),
-- maintains **exact edge coverage** in a byte table at a known address,
-- requires **no runtime shim, no relocation pass, no thread-local state**,
-- can be driven by any existing coverage-guided fuzzer, AFL++ included.
+| claim | measured | |
+|---|---|---|
+| AFL++ merges distinct edges on real control flow | **89.4%** | ✅ confirmed |
+| output growth | **3.25×** | ❌ **unsolved** |
 
-### Why it is different from AFL's
+They cancel into a single honest sentence:
+
+> **The idea is right, and the implementation is currently too expensive.**
+
+That is why [`docs/ROADMAP.md`](docs/ROADMAP.md) starts with making the output
+affordable, not with the fork server.
+
+| | busybox 1.35.0 |
+|---|---|
+| distinct edges found | 128,236 |
+| AFL++ 16 KiB slots they touch | 13,643 of 16,384 |
+| SUTURE slots needed | 65,536 (4× AFL's fixed 16 KiB) |
+| blocks | 85,783 |
+| relocation ratio | 51.6% |
+| indirect branches not instrumented | 40.9% |
+| instrumentation time | 15.6 s (release) |
+
+## Why it exists
+
+Coverage-guided fuzzers get their feedback by *recompiling* the target with
+`afl-clang` or libFuzzer. That excludes three large classes:
+
+| Class | Example | Blocked by |
+|---|---|---|
+| Closed-source binaries | distro `libxml2.so.2`, proprietary `.so`, `.node` | no source |
+| Stale artefacts | reproducing a 2017 build | wrong toolchain |
+| Instrumenting-hostile builds | `#pragma optimize`, inline asm, heavy LTO | rebuild is not faithful |
+
+Existing binary-only tools each pay a different tax: **AFL++ QEMU mode**
+re-raises IR from x86 per block; **DrDynamic / DynamoRIO / Intel PT** are DBI and
+cost orders of magnitude per execution; and the static rewriters that do exist
+(`objcopy`, radare2 scripts, Ghidra scripts) patch code without producing an
+**executable, feedback-ready** binary.
+
+SUTURE takes an ELF and nothing else.
+
+## The core idea
 
 AFL indexes its map as `bitmap[(prev>>1) ^ (cur>>1)]` and carries `prev` in
-**TLS**. That is a lossy hash, and it costs a TLS load on every basic block.
-
-suture assigns each edge a **static integer ID at rewrite time**, so the
-instrumentation is just:
+**TLS** — a lossy hash, costing a TLS load on every basic block. SUTURE assigns
+each edge a **static integer ID at rewrite time**:
 
 ```asm
 taken_stub:
@@ -42,102 +80,132 @@ taken_stub:
     jmp  rel32                ; → original successor
 ```
 
-All stubs and the table live in **one** appended `PT_LOAD`, so the
-RIP-relative displacement stays valid at any load address — which is why PIE
-binaries need no special handling.
+No hash, no TLS, no runtime relocation pass, no shim.
 
-The central technical problem is that `jcc rel8` occupies 2 bytes and
-`jmp rel32` needs 5. suture solves it with **hybrid patching plus opportunistic
-basic-block relocation** (re-emitting blocks into the arena, re-encoding
-RIP-relative operands and relocated immediates). See
-[`docs/DESIGN.md` §4.2](docs/DESIGN.md).
+Stubs live in an `R|X` segment and the table in a separate `R|W` one — a stub
+must be **executed** and the map must be **written**, and under NX one segment
+cannot be both. The two need not be adjacent: RIP-relative addressing is a
+signed 32-bit *relative* displacement, and with both addresses fixed at rewrite
+time the encoding stays correct at any load address. **PIE binaries just work.**
 
-### Claims, and how they are measured
+The central difficulty: `jcc rel8` is **2** bytes, `jmp rel32` is **5**, so there
+is no in-place encoding. SUTURE solves it with **hybrid patching plus
+opportunistic basic-block relocation** into an arena, re-encoding RIP-relative
+operands and relocated immediates. See [`docs/DESIGN.md` §4.2](docs/DESIGN.md).
 
-Stated in advance in [`docs/EVALUATION.md` §5](docs/EVALUATION.md), so the
-results cannot be rationalised after the fact.
+## Three commands
 
-| Claim | Metric | Baseline we must beat |
-|---|---|---|
-| Exact edges > hashed edges | AFL bitmap collision rate, edges/input | AFL++ |
-| Better to fuzz | **edges / CPU-hour** | AFL++ QEMU mode |
-| Rewriting is cheap | instrumentation wall-clock per binary | `afl-llvm` compile time |
-| Overhead is understood | exec/s vs compile-time-instrumented build | `afl-clang-fast` |
-| It finds things | unique crashes, crashes AFL++ misses | AFL++ |
+```bash
+suture analyze    <binary>                     # is it worth instrumenting?
+suture instrument <in.elf> <out.elf> [--json]   # rewrite it
+suture verify     <orig> <inst> <input>...     # prove it still behaves the same
+```
 
-**We do not claim to beat `afl-clang` on exec/s.** A compile-time-instrumented
-build has no rewriting overhead and no code growth. The claim is narrower and
-defensible: *binary-only fuzzing at a fraction of QEMU mode's per-execution
-cost.*
+`analyze` needs no execution and no Linux — a pure function of the bytes, so the
+thesis can be checked on any machine in a second.
 
-### Status
+## Known limitations
 
-63 unit tests pass; the workspace builds with zero warnings.
+Stated up front, because a rewriter that hides its gaps is worse than one that
+does not work.
+
+| Limitation | Cost on busybox |
+|---|---|
+| Output growth | **3.25×** — the main unsolved problem |
+| Relocation ratio | 51.6% of blocks |
+| Indirect branches not instrumented | 40.9% of blocks |
+| **Coverage map cannot be read back** | **the fuzzer does not work** |
+
+The last one is the blocker: a finished process's memory is gone, so reading the
+map needs either a fork server or a shared anonymous mapping the target writes
+into. `suture-exec` returns an **empty** map rather than a fabricated one, and
+`suture-fuzz` labels every run `plain-spawn` with a warning that its exec/s
+measures process creation, not the fuzzer. **Do not report exec/s from the
+current driver.**
+
+## Correctness is a separate crate, not an extra
+
+The strongest objection to any binary rewriter is *"how do you know the output
+still does what the input did?"*, so `suture verify` answers it executably:
+every byte of `.text` that changed must lie inside a range the instrumenter
+**reported patching**. It needs no execution, so it runs anywhere, and it catches
+the failure mode that matters most — a patch that landed one byte off, which
+yields a file that still loads, still passes the loader's alignment congruence,
+and has quietly lost a live instruction.
+
+## Status
+
+69 unit tests, zero warnings, CI green.
 
 | Component | State | Tests |
 |---|---|---|
 | `suture-elf` — parse, phdr rebuild, two-segment injection | **done** | 8 |
-| `suture-ir` — linear sweep, basic blocks, edge-id assignment | **done** | 14 |
+| `suture-ir` — sweep, basic blocks, edge-id assignment | **done** | 20 |
 | `suture-coverage` — map, signatures, AFL collision measurement | **done** | 11 |
-| `suture-instrument` — arena, dispatch stubs, relocation, pipeline | **done** | 14 |
+| `suture-instrument` — arena, stubs, relocation, pipeline, analyze | **done** | 14 |
 | `suture-verify` — structural patch audit | **done** | 4 |
 | `suture-mutate` — bit/byte, interesting-value, splice mutators | **done** | 10 |
 | `suture-exec` — target execution | stub | 2 |
 | `suture-fuzz` — corpus loop | **partial** | 0 |
 | Fork server (fast execution backend) | **not started** | — |
 | `ptrace` trace-equivalence check | **not started** | — |
-| Benchmarks vs. AFL++ | **not started** | — |
+| AFL++ benchmark (edges per CPU-hour) | **not started** | — |
 
-**What works today.** `suture instrument` rewrites a real x86-64 ELF: it
-disassembles `.text`, assigns dense edge ids, relocates blocks whose branch is
-too short to hold a `jmp rel32`, and appends an R|X stub arena plus an R|W
-coverage table. On the bundled smoke fixture it converts a 2-byte `je rel8`
-block into a 5-byte jump into the arena and leaves every other byte untouched.
-`suture verify` then proves that only the ranges suture reported were modified.
+## Building
 
-**What does not work yet.** The coverage map cannot be *read back* from a
-finished process, because the process's memory is gone once it exits. Reading it
-requires either a fork server (the target keeps the mapping alive across
-executions) or a shared anonymous mapping the target writes into. `suture-exec`
-returns an empty map rather than a fabricated one, and `suture-fuzz` labels every
-run `plain-spawn` and warns that its exec/s numbers measure process creation
-rather than the fuzzer. **Do not report exec/s from the current driver.**
+Linux x86-64, Rust 1.75+:
 
-### Requirements
+```bash
+sudo apt install build-essential
+cargo test --workspace
+cargo run -p suture-cli -- analyze <binary>
+```
 
-Linux x86-64, Rust 1.75+. The four core crates are cross-platform and test on
-Windows — see [`docs/BUILDING-ON-WINDOWS.md`](docs/BUILDING-ON-WINDOWS.md).
+The four core crates are cross-platform and test on Windows without a Linux
+host — see [`docs/BUILDING-ON-WINDOWS.md`](docs/BUILDING-ON-WINDOWS.md), which
+also documents the two non-obvious rustup/Windows problems you will hit.
 
-### ⚠️ Safety
+## ⚠️ Safety
 
-suture runs arbitrary binaries. It is **not** a sandbox. Run it only inside a
+SUTURE runs arbitrary binaries. It is **not** a sandbox. Run it inside a
 disposable VM or container.
 
 ---
 
 ## Türkçe
 
-### Ne yapıyor
+### Tek cümlede
 
-Coverage-guided fuzzer'lar geri bildirimi hedefi **yeniden derleyerek**
-alır (`afl-clang`, libFuzzer). Bu, kapalı kaynaklı binary'ler, yeniden
-üretilemeyen build'ler ve enstrümantasyona uygun olmayan kod için imkânsızdır.
+Kaynak kodu, derleyicisi ve runtime shim'i olmayan **kapalı kaynak** x86-64
+ELF binary'lerine, talimatları statik olarak yeniden kodlayıp basic block'ları
+taşıyarak tam kenar kapsama (exact edge coverage) kazandıran bir binary
+rewriter.
 
-suture x86-64 ELF'i alır — kaynak kod, derleyici, build script **hiçbiri
-gerekmez** — ve şunu üretir:
+### İki sayı
 
-- orijinaliyle **aynı davranış** (aynı exit code, aynı çıktı),
-- **tam (exact) edge coverage**'i bilinen adreste bir byte tablosunda,
-- **runtime shim, relocation geçişi, thread-local durum olmadan**,
-- mevcut her coverage-guided fuzzer tarafından sürülebilir — AFL++ dahil.
+`busybox` 1.35.0 (static, musl, 1.1 MB) üzerinde; CI her push'ta yeniden ölçer:
 
-### AFL'den farkı
+| iddia | ölçülen | |
+|---|---|---|
+| AFL++ gerçek control flow'da benzersiz edge'leri birleştiriyor | **%89.4** | ✅ doğrulandı |
+| çıktı büyümesi | **3.25×** | ❌ **çözülmedi** |
 
-AFL map'i `bitmap[(prev>>1) ^ (cur>>1)]` şeklinde indeksler ve `prev`'i
-**TLS**'te taşır. Bu kayıplı (lossy) bir hash'tir ve her basic block girişinde
-TLS yüklemesine mal olur.
+İkisi tek bir dürüst cümleye indirgeniyor: **fikir doğru, uygulama şu an pahalı.**
+Roadmap'ın ilk maddesi bu yüzden fork server değil, çıktıyı ucuzlatmak.
 
-suture her kenara **rewrite anında statik bir tamsayı ID** atar:
+### Neden var
+
+Coverage-guided fuzzer'lar geri bildirimi hedefi yeniden derleyerek alır. Bu,
+kapalı kaynak binary'leri, üretilemeyen build'leri ve enstrümantasyona dirençli
+kodu dışarıda bırakır. Mevcut binary-only araçlar ya blok başına IR kaldırıyor
+(QEMU mode), ya yürütme başına büyüklüklerinde maliyet getiriyor (DBI), ya da
+**çalıştırılabilir ve geri bildirim alınabilir** binary üretmeden kodu yamıyor.
+
+### Çekirdek fikir
+
+AFL map'i `bitmap[(prev>>1) ^ (cur>>1)]` şeklinde indeksler ve `prev`'i **TLS**'te
+taşır — kayıplı bir hash, her basic block'da TLS yüklemesi. SUTURE her kenara
+**rewrite anında statik bir tamsayı ID** atar:
 
 ```asm
 taken_stub:
@@ -145,79 +213,51 @@ taken_stub:
     jmp  rel32                ; → orijinal successor
 ```
 
-Tüm stub'lar ve tablo **tek bir eklenen `PT_LOAD`** içindedir; RIP-relative
-displacement her yükleme adresinde geçerli kalır — bu yüzden PIE binary'lere
-özel işlem gerekmez.
+Hash yok, TLS yok, runtime relocation geçişi yok, shim yok.
 
-Asıl teknik zorluk şu: `jcc rel8` **2** bayt yer kaplar, `jmp rel32` **5**
-bayt ister. suture bunu **hibrit patch + fırsatçı basic-block relocation** ile
-çözer: blokları arena'ya yeniden yazar, RIP-relative operand'ları ve
-taşınan immediate'ları yeniden kodlar. Detay:
-[`docs/DESIGN.md` §4.2](docs/DESIGN.md).
+Stub'lar `R|X`, tablo ayrı bir `R|W` segmentte: stub **çalıştırılmalı**, tablo
+**yazılmalı**; NX altında tek segment ikisini birden yapamaz. İkisi bitişik olmak
+zorunda değil — RIP-relative adresleme göreli bir displacement'tır ve iki adres de
+rewrite anında sabitlendiği için PIE binary'ler kendiliğinden çalışır.
 
-### İddialar ve nasıl ölçülecekleri
+Zor kısım: `jcc rel8` **2** bayt, `jmp rel32` **5** bayt; yerine yazılamaz.
+**Hibrit patch + fırsatçı basic-block relocation** ile çözülüyor: RIP-relative
+operand'lar ve taşınan immediate'lar yeniden kodlanarak arena'ya kopyalanıyor.
 
-Sonuçlar sonradan gerekçelendirilmesin diye
-[`docs/EVALUATION.md` §5](docs/EVALUATION.md) içinde **önceden** yazıldı.
+### Bilinen sınırlar
 
-| İddia | Metrik | Geçilmesi gereken rakip |
-|---|---|---|
-| Tam kenar > hash'lenmiş kenar | AFL bitmap çakışma oranı, input başına kenar | AFL++ |
-| Daha iyi fuzz'lanabilir | **CPU-saati başına kapsanan kenar** | AFL++ QEMU mode |
-| Rewrite ucuz | binary başına enstrümantasyon süresi | `afl-llvm` derleme süresi |
-| Overhead anlaşıldı | exec/s, derleme-zamanı enstrümanl build'e karşı | `afl-clang-fast` |
-| Gerçekten buluyor | benzersiz crash, AFL++'in bulamadıkları | AFL++ |
+| Sınır | busybox üzerindeki maliyeti |
+|---|---|
+| Çıktı büyümesi | **3.25×** — çözülmemiş ana problem |
+| Relocation oranı | blokların %51.6'sı |
+| Enstrümanlanmayan dolaylı dallar | blokların %40.9'u |
+| **Coverage map geri okunamıyor** | **fuzzer çalışmıyor** |
 
-**`afl-clang`'i exec/s'de geçtiğimizi iddia etmiyoruz.** Derleme-zamanı
-enstrümantasyonunda rewrite overhead'i ve kod büyümesi yoktur. İddiamız daha
-dar ve savunulabilir: *QEMU mode'un yürütme başına maliyetinin küçük bir
-kesriyle binary-only fuzzing.*
+Sonuncusu engel: bitmiş bir sürecin belleği gittiği için haritayı okumak fork
+server gerektirir. `suture-exec` uydurma map yerine **boş** map döndürüyor ve
+`suture-fuzz` her koşuyu `plain-spawn` etiketleyip exec/s'nin süreç oluşturmayı
+ölçtüğünü uyarıyor. **Mevcut sürücüden exec/s raporlama.**
 
-### Durum
+### Doğrulama
 
-63 birim testi geçiyor, workspace sıfır uyarıyla derleniyor.
+`suture verify` ayrı bir crate: değişen **her** `.text` baytı, enstrümanın
+**raporladığı** patch aralığının içinde olmak zorunda. Execution gerektirmediği
+için her yerde çalışır ve bir bayt kaymış patch'i yakalar — ki bu, dosyayı hâlâ
+yüklenebilir, hâlâ hizalama kongrüansını geçer, ama sessizce canlı bir talimat
+kaybetmiş bırakan hata sınıfıdır.
 
-| Bileşen | Durum | Test |
-|---|---|---|
-| `suture-elf` — parse, phdr rebuild, iki segment ekleme | **tamam** | 8 |
-| `suture-ir` — linear sweep, basic block, edge-id ataması | **tamam** | 14 |
-| `suture-coverage` — map, imza, AFL çakışma ölçümü | **tamam** | 11 |
-| `suture-instrument` — arena, dispatch stub, relocation, pipeline | **tamam** | 14 |
-| `suture-verify` — yapısal patch denetimi | **tamam** | 4 |
-| `suture-mutate` — bit/byte, interesting-value, splice | **tamam** | 10 |
-| `suture-exec` — hedef çalıştırma | iskelet | 2 |
-| `suture-fuzz` — corpus döngüsü | **kısmi** | 0 |
-| Fork server (hızlı yürütme backend'i) | **başlanmadı** | — |
-| `ptrace` trace-equivalence kontrolü | **başlanmadı** | — |
-| AFL++'e karşı benchmark | **başlanmadı** | — |
+### Derleme
 
-**Bugün çalışan.** `suture instrument` gerçek bir x86-64 ELF'i yeniden yazıyor:
-`.text`'i disassemble ediyor, yoğun edge id atıyor, dalı `jmp rel32`'ye sığmayan
-blokları arena'ya taşıyor, sonuna R|X stub arenası + R|W coverage tablosu
-ekliyor. Smoke fixture'da 2-byte `je rel8` bloğunu arena'ya 5-byte jump ile
-çeviriyor ve diğer tüm baytları olduğu gibi bırakıyor. `suture verify` sonra
-suture'ın raporladığı aralıkların dışında hiçbir baytın değişmediğini kanıtlıyor.
-
-**Henüz çalışmayan.** Coverage tablosu bitmiş bir süreçten **okunamıyor**,
-çünkü süreç sonlandığında belleği kayboluyor. Okumak için ya fork server
-(hedef eşlemeyi yürütmeler boyunca canlı tutar) ya da hedefin yazdığı paylaşımlı
-anonim eşleme gerekiyor. `suture-exec` uydurma map yerine boş map döndürüyor ve
-`suture-fuzz` her koşuyu `plain-spawn` olarak etiketleyip exec/s sayılarının
-fuzzer'ı değil süreç oluşturmayı ölçtüğünü uyarıyor. **Mevcut sürücüden exec/s
-raporlama.**
-
-### Gereksinimler
-
-Linux x86-64, Rust 1.75+. Çekirdek dört crate platform-bağımsız ve Windows'ta
-da test ediliyor — bkz. [`docs/BUILDING-ON-WINDOWS.md`](docs/BUILDING-ON-WINDOWS.md).
+Linux x86-64, Rust 1.75+. Çekirdek dört crate platform-bağımsızdır ve Windows'ta
+da test edilir — bkz. [`docs/BUILDING-ON-WINDOWS.md`](docs/BUILDING-ON-WINDOWS.md).
 
 ### ⚠️ Güvenlik
 
-suture keyfi binary'ler çalıştırır. **Sandbox değildir.** Yalnızca tekrar
+SUTURE keyfi binary'ler çalıştırır. **Sandbox değildir.** Yalnızca tekrar
 kullanılabilir bir VM veya container içinde çalıştırılmalıdır.
 
 ---
 
 ## License
 
-MIT OR Apache-2.0
+MIT · [LICENSE](LICENSE)
